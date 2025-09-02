@@ -39,6 +39,7 @@ export interface ReactDiffViewerProps {
 }
 export interface ReactDiffViewerState {
     expandedBlocks?: number[];
+    renderedChunks: number;
 }
 declare class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerState> {
     private styles;

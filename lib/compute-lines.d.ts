@@ -54,5 +54,5 @@ export interface JsDiffChangeObject {
  * @param compareMethod JsDiff method.
  * @param linesOffset Starting line number offset.
  */
-export declare const computeLineInformation: (oldString: string, newString: string, noise: string[], disableWordDiff?: boolean, compareMethod?: string | ((oldStr: string, newStr: string) => DiffChange[]), linesOffset?: number) => ComputedLineInformation;
+export declare const computeLineInformation: (oldString: string, newString: string, noise?: string[], disableWordDiff?: boolean, compareMethod?: string | ((oldStr: string, newStr: string) => DiffChange[]), linesOffset?: number) => ComputedLineInformation;
 export {};

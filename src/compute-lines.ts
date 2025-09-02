@@ -460,67 +460,59 @@ function CompareJSON(expectedStr: string, actualStr: string, noise: string[], fl
  * @param compareMethod JsDiff method.
  * @param linesOffset Starting line number offset.
  */
+
 export const computeLineInformation = (
   oldString: string,
   newString: string,
-  noise: string[],
+  noise: string[] = [],
   disableWordDiff: boolean = false,
   compareMethod: string | ((oldStr: string, newStr: string) => DiffChange[]) = DiffMethod.CHARS,
   linesOffset: number = 0,
 ): ComputedLineInformation => {
+  let diffArray: DiffChange[] = [];
+  let isJSON = false;
 
-  if (noise === null || noise === undefined) {
-    noise = [];
+  if ((oldString.startsWith('{') || oldString.startsWith('[')) &&
+      (newString.startsWith('{') || newString.startsWith('['))) {
+    try {
+      JSON.parse(oldString);
+      JSON.parse(newString);
+      isJSON = true;
+    } catch {
+      isJSON = false;
+    }
   }
 
-  let diffArray: DiffChange[];
-  let validJSON: string = "plain";
-  try {
-    JSON.parse(oldString);
-    JSON.parse(newString);
-    validJSON = "JSON";
-  }
-  catch (e) {
-    // fall back to plain text diff if not valid JSON
-  }
+  if (!isJSON) {
+    if (!noise.length || (noise.length > 0 && !noise.includes("body"))) {
+      diffArray = diff.diffLines(oldString.trimEnd(), newString.trimEnd(), {
+        newlineIsToken: true,
+        ignoreWhitespace: false,
+        ignoreCase: false,
+      }) as DiffChange[];
 
-  if (validJSON === 'plain') {
-    if (noise == null || noise.length == 0 || (noise.length > 0 && !noise.includes("body"))) {
-      diffArray = diff.diffLines(
-        oldString.trimRight(),
-        newString.trimRight(),
-        {
-          newlineIsToken: true,
-          ignoreWhitespace: false,
-          ignoreCase: false,
-        },
-      ) as DiffChange[];
-      if (diffArray.length === 1) {
-        diffArray[0].count = -1;
+      if (diffArray.length === 1) diffArray[0].count = -1;
+
+      for (const d of diffArray) {
+        if (d.flattenPath === undefined) d.flattenPath = "";
       }
-      diffArray.forEach(d => {
-        if (d.flattenPath === undefined) {
-          d.flattenPath = "";
-        }
-      });
     } else {
       diffArray = noiseDiffArray(oldString, newString, "", "");
     }
   } else {
-    diffArray = CompareJSON(
-      oldString.trimRight(),
-      newString.trimRight(),
-      noise,
-      "",
-    );
+    diffArray = CompareJSON(oldString.trimEnd(), newString.trimEnd(), noise, "");
   }
 
   let rightLineNumber = linesOffset;
   let leftLineNumber = linesOffset;
-  let lineInformation: LineInformation[] = [];
   let counter = 0;
+
+  const lineInformation: LineInformation[] = [];
   const diffLines: number[] = [];
-  const ignoreDiffIndexes: string[] = [];
+  const ignoreDiffIndexes = new Set<string>();
+
+  const TAG = "_keploy_|_keploy_";
+  const TAG_LENGTH = TAG.length;
 
   const getLineInformation = (
     value: string,
@@ -528,60 +520,49 @@ export const computeLineInformation = (
     added?: boolean,
     removed?: boolean,
     noised?: boolean,
-    evaluateOnlyFirstLine?: boolean,
-    LineIndexTobeReturned?: number,
   ): LineInformation[] => {
     const lines = constructLines(value);
-    return lines.map((line: string, lineIndex): LineInformation => {
-      if (ignoreDiffIndexes.includes(`${diffIndex}-${lineIndex}`)
-        || (evaluateOnlyFirstLine && lineIndex !== 0) || diffArray[diffIndex].count === -3) {
-        return undefined;
+    const result: LineInformation[] = [];
+    const diffEntry = diffArray[diffIndex];
+    const currentFlattenPath = diffEntry.flattenPath || "";
+
+    for (let lineIndex = 0; lineIndex < lines.length; lineIndex++) {
+      if (ignoreDiffIndexes.has(`${diffIndex}-${lineIndex}`) || diffEntry.count === -3) {
+        continue;
       }
 
+      const line = lines[lineIndex];
       const left: DiffInformation = {};
       const right: DiffInformation = {};
-      const currentFlattenPath = diffArray[diffIndex].flattenPath || "";
 
       if (added || removed) {
-        if (!diffLines.includes(counter)) {
-          diffLines.push(counter);
-        }
+        if (!diffLines.includes(counter)) diffLines.push(counter);
+
         if (removed) {
-          leftLineNumber += 1;
+          leftLineNumber++;
           left.lineNumber = leftLineNumber;
           left.type = DiffType.REMOVED;
-          left.value = line || ' ';
+          left.value = line || " ";
           left.flattenPath = currentFlattenPath;
+
           const nextDiff = diffArray[diffIndex + 1];
-          if (nextDiff && nextDiff.added) {
-            const nextDiffLines = constructLines(nextDiff.value)[lineIndex];
-            if (lineIndex < constructLines(nextDiff.value).length && lineIndex === lines.length - 1) {
-              lines.push(' ');
-            }
-            if (nextDiffLines) {
-              const nextLineInfo = getLineInformation(
-                nextDiff.value,
-                diffIndex + 1,
-                true,
-                false,
-                nextDiff.noised
-              );
+          if (nextDiff?.added) {
+            const nextLines = constructLines(nextDiff.value);
+            if (lineIndex < nextLines.length) {
+              const nextLineInfo = getLineInformation(nextDiff.value, diffIndex + 1, true, false, nextDiff.noised);
               const nextInfo = nextLineInfo[lineIndex];
-              if (nextInfo && nextInfo.right) {
-                ignoreDiffIndexes.push(`${diffIndex + 1}-${lineIndex}`);
+              if (nextInfo?.right) {
+                ignoreDiffIndexes.add(`${diffIndex + 1}-${lineIndex}`);
                 right.lineNumber = nextInfo.right.lineNumber;
                 right.type = nextInfo.right.type;
                 right.flattenPath = nextDiff.flattenPath || "";
+
                 if (disableWordDiff) {
                   right.value = nextInfo.right.value;
                 } else {
-                  const computedDiff = computeDiff(
-                    line,
-                    nextInfo.right.value as string,
-                    compareMethod,
-                  );
-                  computedDiff.left.forEach(l => { l.flattenPath = currentFlattenPath; });
-                  computedDiff.right.forEach(r => { r.flattenPath = currentFlattenPath; });
+                  const computedDiff = computeDiff(line, nextInfo.right.value as string, compareMethod);
+                  for (const l of computedDiff.left) l.flattenPath = currentFlattenPath;
+                  for (const r of computedDiff.right) r.flattenPath = currentFlattenPath;
                   right.value = computedDiff.right;
                   left.value = computedDiff.left;
                 }
@@ -589,62 +570,46 @@ export const computeLineInformation = (
             }
           }
         } else {
-          rightLineNumber += 1;
+          rightLineNumber++;
           right.lineNumber = rightLineNumber;
           right.type = DiffType.ADDED;
           right.value = line;
           right.flattenPath = currentFlattenPath;
         }
       } else {
-        // default lines
-        if (diffArray[diffIndex].count === -1 || diffArray[diffIndex].count >= 0) {
-          leftLineNumber += 1;
-          rightLineNumber += 1;
+        if (diffEntry.count === -1 || diffEntry.count >= 0) {
+          leftLineNumber++;
+          rightLineNumber++;
           left.lineNumber = leftLineNumber;
-          left.type = DiffType.DEFAULT;
           right.lineNumber = rightLineNumber;
-          right.type = DiffType.DEFAULT;
-          left.value = line;
-          right.value = line;
-          left.flattenPath = currentFlattenPath;
-          right.flattenPath = currentFlattenPath;
-          if (noised) {
-            left.type = DiffType.NOISED;
-            right.type = DiffType.NOISED;
-          }
-        } else if (diffArray[diffIndex].count === -2) {
-          const tagStartIndex = value.indexOf('_keploy_|_keploy_');
-          const tagLength = '_keploy_|_keploy_'.length;
-          leftLineNumber += 1;
-          rightLineNumber += 1;
+          left.type = right.type = DiffType.DEFAULT;
+          left.value = right.value = line;
+          left.flattenPath = right.flattenPath = currentFlattenPath;
+          if (noised) left.type = right.type = DiffType.NOISED;
+        } else if (diffEntry.count === -2) {
+          const tagStartIndex = value.indexOf(TAG);
+          leftLineNumber++;
+          rightLineNumber++;
           left.lineNumber = leftLineNumber;
-          left.type = DiffType.DEFAULT;
           right.lineNumber = rightLineNumber;
-          right.type = DiffType.DEFAULT;
+          left.type = right.type = DiffType.DEFAULT;
           left.value = line.substring(0, tagStartIndex);
-          right.value = line.substring(tagStartIndex + tagLength);
-          left.flattenPath = currentFlattenPath;
-          right.flattenPath = currentFlattenPath;
-          if (noised) {
-            left.type = DiffType.NOISED;
-            right.type = DiffType.NOISED;
-          }
+          right.value = line.substring(tagStartIndex + TAG_LENGTH);
+          left.flattenPath = right.flattenPath = currentFlattenPath;
+          if (noised) left.type = right.type = DiffType.NOISED;
         }
       }
-      counter += 1;
-      return { right, left };
-    }).filter((item): item is LineInformation => Boolean(item));
+
+      counter++;
+      result.push({ left, right });
+    }
+    return result;
   };
 
-  diffArray.forEach(({ added, removed, value, noised, flattenPath }, index): void => {
-    lineInformation = [
-      ...lineInformation,
-      ...getLineInformation(value, index, added, removed, noised),
-    ];
-  });
+  for (let i = 0; i < diffArray.length; i++) {
+    const { added, removed, value, noised } = diffArray[i];
+    lineInformation.push(...getLineInformation(value, i, added, removed, noised));
+  }
 
-  return {
-    lineInformation,
-    diffLines,
-  };
+  return { lineInformation, diffLines };
 };

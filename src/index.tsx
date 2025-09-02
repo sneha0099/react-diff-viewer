@@ -64,6 +64,7 @@ export interface ReactDiffViewerProps {
 
 export interface ReactDiffViewerState {
   expandedBlocks?: number[];
+  renderedChunks: number; // add this
 }
 
 class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerState> {
@@ -104,13 +105,14 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     linesOffset: PropTypes.number,
   };
 
-  public constructor(props: ReactDiffViewerProps) {
-    super(props);
+constructor(props: ReactDiffViewerProps) {
+  super(props);
+  this.state = {
+    expandedBlocks: [],
+    renderedChunks: 1, // start with first chunk
+  };
+}
 
-    this.state = {
-      expandedBlocks: [],
-    };
-  }
 
   public resetCodeBlocks = (): boolean => {
     if (this.state.expandedBlocks.length > 0) {
@@ -418,132 +420,171 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     );
   };
 
-  private renderDiff = (): JSX.Element[] => {
-    const {
-      oldValue,
-      newValue,
-      noise,
-      splitView,
-      disableWordDiff,
-      compareMethod,
-      linesOffset,
-    } = this.props;
-    const { lineInformation, diffLines } = computeLineInformation(
-      oldValue,
-      newValue,
-      noise,
-      disableWordDiff,
-      compareMethod,
-      linesOffset,
-    );
+  private renderDiff = (maxLines?: number): JSX.Element[] => {
+  const {
+    oldValue,
+    newValue,
+    noise,
+    splitView,
+    disableWordDiff,
+    compareMethod,
+    linesOffset,
+  } = this.props;
 
-    const extraLines =
-      this.props.extraLinesSurroundingDiff < 0 ? 0 : this.props.extraLinesSurroundingDiff;
-    let skippedLines: number[] = [];
-    return lineInformation.map((line: LineInformation, i: number): JSX.Element => {
-      const diffBlockStart = diffLines[0];
-      const currentPosition = diffBlockStart - i;
-      if (this.props.showDiffOnly) {
-        if (currentPosition === -extraLines) {
-          skippedLines = [];
-          diffLines.shift();
-        }
-        if (
-          line.left.type === DiffType.DEFAULT &&
-          (currentPosition > extraLines || typeof diffBlockStart === 'undefined') &&
-          !this.state.expandedBlocks.includes(diffBlockStart)
-        ) {
-          skippedLines.push(i + 1);
-          if (i === lineInformation.length - 1 && skippedLines.length > 1) {
-            return this.renderSkippedLineIndicator(
+  const { lineInformation, diffLines } = computeLineInformation(
+    oldValue,
+    newValue,
+    noise,
+    disableWordDiff,
+    compareMethod,
+    linesOffset,
+  );
+
+  const extraLines =
+    this.props.extraLinesSurroundingDiff < 0
+      ? 0
+      : this.props.extraLinesSurroundingDiff;
+
+  let skippedLines: number[] = [];
+  const nodes: JSX.Element[] = [];
+
+  const limit = maxLines ?? lineInformation.length;
+
+  for (let i = 0; i < limit && i < lineInformation.length; i++) {
+    const line = lineInformation[i];
+    const diffBlockStart = diffLines[0];
+    const currentPosition = diffBlockStart - i;
+
+    if (this.props.showDiffOnly) {
+      if (currentPosition === -extraLines) {
+        skippedLines = [];
+        diffLines.shift();
+      }
+      if (
+        line.left.type === DiffType.DEFAULT &&
+        (currentPosition > extraLines ||
+          typeof diffBlockStart === "undefined") &&
+        !this.state.expandedBlocks.includes(diffBlockStart)
+      ) {
+        skippedLines.push(i + 1);
+        if (i === lineInformation.length - 1 && skippedLines.length > 1) {
+          nodes.push(
+            this.renderSkippedLineIndicator(
               skippedLines.length,
               diffBlockStart,
               line.left.lineNumber,
               line.right.lineNumber,
-            );
-          }
-          return null;
+            ),
+          );
         }
+        continue;
       }
-
-      const diffNodes = splitView
-        ? this.renderSplitView(line, i)
-        : this.renderInlineView(line, i);
-
-      if (currentPosition === extraLines && skippedLines.length > 0) {
-        const { length } = skippedLines;
-        skippedLines = [];
-        return (
-          <React.Fragment key={i}>
-            {this.renderSkippedLineIndicator(
-              length,
-              diffBlockStart,
-              line.left.lineNumber,
-              line.right.lineNumber,
-            )}
-            {diffNodes}
-          </React.Fragment>
-        );
-      }
-      return diffNodes;
-    });
-  };
-
-  public render = (): JSX.Element => {
-    const {
-      oldValue,
-      newValue,
-      useDarkTheme,
-      leftTitle,
-      rightTitle,
-      splitView,
-      hideLineNumbers,
-    } = this.props;
-
-    if (typeof oldValue !== 'string' || typeof newValue !== 'string') {
-      throw Error('"oldValue" and "newValue" should be strings');
     }
 
-    this.styles = this.computeStyles(this.props.styles, useDarkTheme);
-    const nodes = this.renderDiff();
-    const colSpanOnSplitView = hideLineNumbers ? 2 : 3;
-    const colSpanOnInlineView = hideLineNumbers ? 2 : 4;
-    let columnExtension = this.props.renderGutter ? 1 : 0;
+    const diffNodes = splitView
+      ? this.renderSplitView(line, i)
+      : this.renderInlineView(line, i);
 
-    const title = (leftTitle || rightTitle) && (
-      <tr>
+    if (currentPosition === extraLines && skippedLines.length > 0) {
+      const { length } = skippedLines;
+      skippedLines = [];
+      nodes.push(
+        <React.Fragment key={i}>
+          {this.renderSkippedLineIndicator(
+            length,
+            diffBlockStart,
+            line.left.lineNumber,
+            line.right.lineNumber,
+          )}
+          {diffNodes}
+        </React.Fragment>,
+      );
+    } else {
+      nodes.push(diffNodes);
+    }
+  }
+
+  return nodes;
+};
+
+public render = (): JSX.Element => {
+  const {
+    oldValue,
+    newValue,
+    useDarkTheme,
+    leftTitle,
+    rightTitle,
+    splitView,
+    hideLineNumbers,
+  } = this.props;
+
+  if (typeof oldValue !== "string" || typeof newValue !== "string") {
+    throw Error('"oldValue" and "newValue" should be strings');
+  }
+
+  this.styles = this.computeStyles(this.props.styles, useDarkTheme);
+  const { renderedChunks } = this.state;
+  const CHUNK_SIZE = 500;
+  const visibleNodes = this.renderDiff(renderedChunks * CHUNK_SIZE);
+
+  if (
+    visibleNodes.length < computeLineInformation(
+      oldValue,
+      newValue,
+      this.props.noise,
+      this.props.disableWordDiff,
+      this.props.compareMethod,
+      this.props.linesOffset,
+    ).lineInformation.length
+  ) {
+requestIdleCallback?.(() => {
+  this.setState((prev) => ({
+    renderedChunks: prev.renderedChunks + 1,
+  }));
+});
+
+  }
+
+  const colSpanOnSplitView = hideLineNumbers ? 2 : 3;
+  const colSpanOnInlineView = hideLineNumbers ? 2 : 4;
+  const columnExtension = this.props.renderGutter ? 1 : 0;
+
+  const title = (leftTitle || rightTitle) && (
+    <tr>
+      <td
+        colSpan={
+          (splitView ? colSpanOnSplitView : colSpanOnInlineView) +
+          columnExtension
+        }
+        className={this.styles.titleBlock}
+      >
+        <pre className={this.styles.contentText}>{leftTitle}</pre>
+      </td>
+      {splitView && (
         <td
-          colSpan={
-            (splitView ? colSpanOnSplitView : colSpanOnInlineView) + columnExtension
-          }
+          colSpan={colSpanOnSplitView + columnExtension}
           className={this.styles.titleBlock}
         >
-          <pre className={this.styles.contentText}>{leftTitle}</pre>
+          <pre className={this.styles.contentText}>{rightTitle}</pre>
         </td>
-        {splitView && (
-          <td
-            colSpan={colSpanOnSplitView + columnExtension}
-            className={this.styles.titleBlock}
-          >
-            <pre className={this.styles.contentText}>{rightTitle}</pre>
-          </td>
-        )}
-      </tr>
-    );
+      )}
+    </tr>
+  );
 
-    return (
-      <table
-        className={cn(this.styles.diffContainer, {
-          [this.styles.splitView]: splitView,
-        })}
-      >
-        <tbody>
-          {title}
-          {nodes}
-        </tbody>
-      </table>
-    );
-  };
+  return (
+    <table
+      className={cn(this.styles.diffContainer, {
+        [this.styles.splitView]: splitView,
+      })}
+    >
+      <tbody>
+        {title}
+        {visibleNodes}
+      </tbody>
+    </table>
+  );
+};
+
 }
 
 export default DiffViewer;
