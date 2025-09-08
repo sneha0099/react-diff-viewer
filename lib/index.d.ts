@@ -36,13 +36,19 @@ export interface ReactDiffViewerProps {
     useDarkTheme?: boolean;
     leftTitle?: string | JSX.Element;
     rightTitle?: string | JSX.Element;
+    enableVirtualization?: boolean;
+    virtualizedHeight?: number;
 }
 export interface ReactDiffViewerState {
     expandedBlocks?: number[];
-    renderedChunks: number;
 }
 declare class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerState> {
     private styles;
+    private listRef;
+    private itemHeights;
+    private lineInformation;
+    private processedLines;
+    private lastContainerWidth;
     static defaultProps: ReactDiffViewerProps;
     static propTypes: {
         oldValue: PropTypes.Validator<string>;
@@ -61,14 +67,26 @@ declare class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiff
         leftTitle: PropTypes.Requireable<NonNullable<string | PropTypes.ReactElementLike>>;
         rightTitle: PropTypes.Requireable<NonNullable<string | PropTypes.ReactElementLike>>;
         linesOffset: PropTypes.Requireable<number>;
+        enableVirtualization: PropTypes.Requireable<boolean>;
+        virtualizedHeight: PropTypes.Requireable<number>;
     };
     constructor(props: ReactDiffViewerProps);
+    componentDidUpdate(prevProps: ReactDiffViewerProps): void;
     resetCodeBlocks: () => boolean;
     private onBlockExpand;
     private computeStyles;
     private onLineNumberClickProxy;
     private renderWordDiff;
     private renderLine;
+    private getRowHeight;
+    private setRowHeight;
+    private clearHeightsOnWidthChange;
+    private VirtualizedRow;
+    private renderSplitViewRow;
+    private renderInlineViewRow;
+    private renderVirtualizedDiff;
+    private renderInternalVirtualizedDiff;
+    private renderMinimapOptimizedDiff;
     private renderSplitView;
     renderInlineView: ({ left, right }: LineInformation, index: number) => JSX.Element;
     private onBlockClickProxy;
