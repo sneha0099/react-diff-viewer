@@ -568,13 +568,13 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
 
   private renderVirtualizedDiff = (): JSX.Element => {
     const lineCount = this.lineInformation.length;
-    const isSmallDataset = lineCount <= 2500;
+    const isSmallDataset = lineCount <= 700;
 
     if (isSmallDataset) {
       return this.renderMinimapOptimizedDiff();
     }
 
-    // For large datasets (>2500 lines), use internal virtualized scrolling
+    // For large datasets (>700 lines), use internal virtualized scrolling
     return this.renderInternalVirtualizedDiff();
   };
 
