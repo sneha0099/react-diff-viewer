@@ -218,15 +218,39 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
             onClick={lineNumber && this.onLineNumberClickProxy(lineNumberTemplate)}
             className={cn(this.styles.gutter, {
               [this.styles.emptyGutter]: !lineNumber,
-              [this.styles.diffAdded]: added,
-              [this.styles.diffRemoved]: removed,
-              [this.styles.diffNoised]: noised,
               [this.styles.highlightedGutter]: highlightLine,
             })}
             data-flattenpath={flattenPath || ''}
-            style={{ verticalAlign: 'top' }}
+            style={{
+              verticalAlign: 'middle',
+              padding: 0,
+              height: '100%',
+              background: '#f4f4f4', // always grey
+              width: '100%',
+            }}
           >
-            <pre className={this.styles.lineNumber}>{lineNumber}</pre>
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              height: '100%',
+              width: '100%',
+            }}>
+              <pre className={this.styles.lineNumber} style={{
+                textAlign: 'center',
+                fontVariantNumeric: 'tabular-nums',
+                minWidth: 48,
+                margin: 0,
+                padding: 0,
+                background: 'transparent',
+                height: '100%',
+                width: '100%',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                boxSizing: 'border-box',
+              }}>{lineNumber}</pre>
+            </div>
           </td>
         )}
         {!this.props.splitView && !this.props.hideLineNumbers && (
@@ -1024,7 +1048,7 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
         }}
       >
         <colgroup>
-          {!hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
+          {!hideLineNumbers && <col style={{ width: '60px', minWidth: '60px' }} />}
           {!splitView && !hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
           {this.props.renderGutter && <col style={{ width: '30px', minWidth: '30px' }} />}
           <col style={{ width: '30px', minWidth: '30px' }} />
