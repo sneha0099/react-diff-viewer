@@ -389,8 +389,76 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     }
   };
 
-  // Virtualized row renderer - only renders what's visible
-  private VirtualizedRow = ({ index, style }: ListChildComponentProps) => {
+  // Virtualized row renderer with title support
+  private VirtualizedRowWithTitle = ({ index, style }: ListChildComponentProps) => {
+    const { leftTitle, rightTitle, splitView, hideLineNumbers } = this.props;
+    const hasTitle = leftTitle || rightTitle;
+    
+    // If we have a title and this is the first row, render the title
+    if (hasTitle && index === 0) {
+      const colSpanOnSplitView = hideLineNumbers ? 2 : 3;
+      const colSpanOnInlineView = hideLineNumbers ? 2 : 4;
+      let columnExtension = this.props.renderGutter ? 1 : 0;
+      
+      return (
+        <div style={style}>
+          <table
+            className={cn(this.styles.diffContainer, {
+              [this.styles.splitView]: splitView,
+            })}
+            style={{
+              width: '100%',
+              tableLayout: 'fixed',
+              wordBreak: 'break-word',
+              borderCollapse: 'separate',
+              borderSpacing: 0,
+              height: '100%',
+            }}
+          >
+            <colgroup>
+              {!hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
+              {!splitView && !hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
+              {this.props.renderGutter && <col style={{ width: '30px', minWidth: '30px' }} />}
+              <col style={{ width: '30px', minWidth: '30px' }} />
+              <col style={{ width: 'auto' }} />
+              {splitView && (
+                <>
+                  {!hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
+                  {this.props.renderGutter && <col style={{ width: '30px', minWidth: '30px' }} />}
+                  <col style={{ width: '30px', minWidth: '30px' }} />
+                  <col style={{ width: 'auto' }} />
+                </>
+              )}
+            </colgroup>
+            <tbody>
+              <tr>
+                <td
+                  colSpan={
+                    (splitView ? colSpanOnSplitView : colSpanOnInlineView) + columnExtension
+                  }
+                  className={this.styles.titleBlock}
+                >
+                  <pre className={this.styles.contentText}>{leftTitle}</pre>
+                </td>
+                {splitView && (
+                  <td
+                    colSpan={colSpanOnSplitView + columnExtension}
+                    className={this.styles.titleBlock}
+                  >
+                    <pre className={this.styles.contentText}>{rightTitle}</pre>
+                  </td>
+                )}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      );
+    }
+    
+    // For regular rows, adjust the index and render the line
+    const lineIndex = hasTitle ? index - 1 : index;
+    const line = this.lineInformation[lineIndex];
+    if (!line) return null;
     const rowRef = React.useRef<HTMLDivElement>(null);
     const [forceUpdate, setForceUpdate] = React.useState(0);
     
@@ -398,13 +466,12 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
       if (rowRef.current) {
         const height = rowRef.current.getBoundingClientRect().height;
         // Only update if height changed significantly to avoid infinite re-renders
-        if (Math.abs((this.itemHeights[index] || 0) - height) > 3) {
-          this.setRowHeight(index, height);
+        if (Math.abs((this.itemHeights[lineIndex] || 0) - height) > 3) {
+          this.setRowHeight(lineIndex, height);
         }
       }
     });
 
-    
     React.useEffect(() => {
       const handleInteraction = (e: Event) => {
         const target = e.target as HTMLElement;
@@ -425,16 +492,11 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
       }
     }, []);
 
-    const line = this.lineInformation[index];
-    if (!line) return null;
-
-    const { splitView } = this.props;
-
-    const estimatedHeight = this.getRowHeight(index);
+    const estimatedHeight = this.getRowHeight(lineIndex);
     
     return (
       <div 
-        key={`row-${index}-${forceUpdate}-${!!this.props.renderGutter}`} 
+        key={`row-${lineIndex}-${forceUpdate}-${!!this.props.renderGutter}`} 
         style={{
           ...style,
           minHeight: Math.max(32, estimatedHeight), 
@@ -444,7 +506,7 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
       >
         <table 
           className={cn(this.styles.diffContainer, {
-            [this.styles.splitView]: splitView,
+            [this.styles.splitView]: this.props.splitView,
           })}
           style={{ 
             width: '100%', 
@@ -470,7 +532,7 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
             )}
           </colgroup>
           <tbody>
-            {splitView ? this.renderSplitViewRow(line, index) : this.renderInlineViewRow(line, index)}
+            {this.props.splitView ? this.renderSplitViewRow(line, lineIndex) : this.renderInlineViewRow(line, lineIndex)}
           </tbody>
         </table>
       </div>
@@ -580,7 +642,8 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
 
   
   private renderInternalVirtualizedDiff = (): JSX.Element => {
-    const { virtualizedHeight } = this.props;
+    const { virtualizedHeight, leftTitle, rightTitle } = this.props;
+    const hasTitle = leftTitle || rightTitle;
     
     return (
       <div style={{ height: virtualizedHeight || 600, overflow: 'auto' }}>
@@ -590,19 +653,28 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
             this.clearHeightsOnWidthChange(width);
             
             const ListComponent = VariableSizeList as any;
+            // Add 1 to itemCount if we have a title (title will be the first item)
+            const itemCount = hasTitle ? this.lineInformation.length + 1 : this.lineInformation.length;
+            
             return (
               <ListComponent
                 height={height}
                 width={width}
-                itemCount={this.lineInformation.length}
-                itemSize={this.getRowHeight}
+                itemCount={itemCount}
+                itemSize={(index: number) => {
+                  // Title row gets fixed height of 40px
+                  if (hasTitle && index === 0) return 40;
+                  // Adjust index for line information if we have a title
+                  const lineIndex = hasTitle ? index - 1 : index;
+                  return this.getRowHeight(lineIndex);
+                }}
                 ref={this.listRef}
                 overscanCount={5} // Show a few extra items for smooth scrolling
                 estimatedItemSize={40}
                 layout="vertical"
                 key={`${width}-${height}`} // Force re-render on size change
               >
-                {this.VirtualizedRow}
+                {this.VirtualizedRowWithTitle}
               </ListComponent>
             );
           }}
@@ -613,6 +685,32 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
 
   // Optimized rendering for minimap mode - renders all content but with performance optimizations
   private renderMinimapOptimizedDiff = (): JSX.Element => {
+    const { leftTitle, rightTitle, splitView, hideLineNumbers } = this.props;
+    const colSpanOnSplitView = hideLineNumbers ? 2 : 3;
+    const colSpanOnInlineView = hideLineNumbers ? 2 : 4;
+    let columnExtension = this.props.renderGutter ? 1 : 0;
+
+    const title = (leftTitle || rightTitle) && (
+      <tr>
+        <td
+          colSpan={
+            (splitView ? colSpanOnSplitView : colSpanOnInlineView) + columnExtension
+          }
+          className={this.styles.titleBlock}
+        >
+          <pre className={this.styles.contentText}>{leftTitle}</pre>
+        </td>
+        {splitView && (
+          <td
+            colSpan={colSpanOnSplitView + columnExtension}
+            className={this.styles.titleBlock}
+          >
+            <pre className={this.styles.contentText}>{rightTitle}</pre>
+          </td>
+        )}
+      </tr>
+    );
+
     // Use simpler rendering for better performance with large datasets
     const optimizedRows = this.lineInformation.map((line, index) => {
       const { left, right } = line;
@@ -733,6 +831,7 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
             )}
           </colgroup>
           <tbody>
+            {title}
             {optimizedRows}
           </tbody>
         </table>
@@ -1018,16 +1117,6 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     if (enableVirtualization) {
       return (
         <div>
-          {title && (
-            <table
-              className={cn(this.styles.diffContainer, {
-                [this.styles.splitView]: splitView,
-              })}
-              style={{ width: '100%' }}
-            >
-              <tbody>{title}</tbody>
-            </table>
-          )}
           {this.renderVirtualizedDiff()}
         </div>
       );
