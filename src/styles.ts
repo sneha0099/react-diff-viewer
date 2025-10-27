@@ -253,7 +253,7 @@ export default (
 
 
   const wordDiff = css({
-    padding: 2,
+    padding: 0,
     display: 'inline-flex',
     borderRadius: 1,
     label: 'word-diff',

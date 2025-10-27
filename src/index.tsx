@@ -61,8 +61,6 @@ export interface ReactDiffViewerProps {
   useDarkTheme?: boolean;
   leftTitle?: string | JSX.Element;
   rightTitle?: string | JSX.Element;
-  enableVirtualization?: boolean;
-  virtualizedHeight?: number;
 }
 
 export interface ReactDiffViewerState {
@@ -91,8 +89,6 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     showDiffOnly: true,
     useDarkTheme: false,
     linesOffset: 0,
-    enableVirtualization: false,
-    virtualizedHeight: 600,
   };
 
   public static propTypes = {
@@ -112,8 +108,6 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     leftTitle: PropTypes.oneOfType([PropTypes.string, PropTypes.element]),
     rightTitle: PropTypes.oneOfType([PropTypes.string, PropTypes.element]),
     linesOffset: PropTypes.number,
-    enableVirtualization: PropTypes.bool,
-    virtualizedHeight: PropTypes.number,
   };
 
   public constructor(props: ReactDiffViewerProps) {
@@ -122,14 +116,31 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     this.state = {
       expandedBlocks: [],
     };
+    
+    // Ensure clean initialization
+    this.itemHeights = {};
+    this.lastContainerWidth = 0;
   }
 
   public componentDidUpdate(prevProps: ReactDiffViewerProps): void {
+    // Clear height cache when renderGutter changes
     if (!!prevProps.renderGutter !== !!this.props.renderGutter) {
-      this.itemHeights = {};
-      if (this.listRef.current) {
-        this.listRef.current.resetAfterIndex(0);
-      }
+      this.forceResetAllHeights();
+    }
+
+    // Clear height cache when noise array changes (mark noise mode toggle)
+    if (JSON.stringify(prevProps.noise) !== JSON.stringify(this.props.noise)) {
+      this.forceResetAllHeights();
+    }
+
+    // Clear height cache when content changes (oldValue/newValue)
+    if (prevProps.oldValue !== this.props.oldValue || prevProps.newValue !== this.props.newValue) {
+      this.forceResetAllHeights();
+    }
+
+    // Clear height cache when split view mode changes
+    if (prevProps.splitView !== this.props.splitView) {
+      this.forceResetAllHeights();
     }
   }
 
@@ -143,14 +154,6 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     return false;
   };
 
-  private onBlockExpand = (id: number): void => {
-    const prevState = this.state.expandedBlocks.slice();
-    prevState.push(id);
-
-    this.setState({
-      expandedBlocks: prevState,
-    });
-  };
 
   private computeStyles: (
     styles: ReactDiffViewerStylesOverride,
@@ -222,35 +225,26 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
             })}
             data-flattenpath={flattenPath || ''}
             style={{
-              verticalAlign: 'middle',
+              verticalAlign: 'top',
               padding: 0,
-              height: '100%',
+              margin: 0,
               background: '#f4f4f4', // always grey
-              width: '100%',
+              width: '50px',
+              minWidth: '50px',
+              textAlign: 'center',
+              borderRight: '1px solid #ddd',
             }}
           >
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              height: '100%',
-              width: '100%',
-            }}>
-              <pre className={this.styles.lineNumber} style={{
-                textAlign: 'center',
-                fontVariantNumeric: 'tabular-nums',
-                minWidth: 48,
-                margin: 0,
-                padding: 0,
-                background: 'transparent',
-                height: '100%',
-                width: '100%',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                boxSizing: 'border-box',
-              }}>{lineNumber}</pre>
-            </div>
+            <pre className={this.styles.lineNumber} style={{
+              textAlign: 'center',
+              fontVariantNumeric: 'tabular-nums',
+              minWidth: 48,
+              margin: 0,
+              padding: '2px 4px',
+              background: 'transparent',
+              lineHeight: '22px',
+              boxSizing: 'border-box',
+            }}>{lineNumber}</pre>
           </td>
         )}
         {!this.props.splitView && !this.props.hideLineNumbers && (
@@ -266,9 +260,27 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
               [this.styles.highlightedGutter]: highlightLine,
             })}
             data-flattenpath={flattenPath || ''}
-            style={{ verticalAlign: 'top' }}
+            style={{ 
+              verticalAlign: 'top',
+              padding: 0,
+              margin: 0,
+              background: '#f4f4f4',
+              width: '50px',
+              minWidth: '50px',
+              textAlign: 'center',
+              borderRight: '1px solid #ddd',
+            }}
           >
-            <pre className={this.styles.lineNumber}>{additionalLineNumber}</pre>
+            <pre className={this.styles.lineNumber} style={{
+              textAlign: 'center',
+              fontVariantNumeric: 'tabular-nums',
+              minWidth: 48,
+              margin: 0,
+              padding: '2px 4px',
+              background: 'transparent',
+              lineHeight: '22px',
+              boxSizing: 'border-box',
+            }}>{additionalLineNumber}</pre>
           </td>
         )}
         {this.props.renderGutter && (
@@ -276,7 +288,7 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
             className={this.styles.gutter} 
             data-flattenpath={flattenPath || ''}
             style={{ 
-              verticalAlign: 'middle',
+              verticalAlign: 'top',
               minWidth: '30px',
               width: '30px',
               textAlign: 'center',
@@ -284,19 +296,33 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
               margin: '0',
               background: 'transparent',
               border: 'none',
-              lineHeight: 'inherit'
+              lineHeight: '22px',
+              position: 'relative',
             }}
           >
-            {this.props.renderGutter({
-              lineNumber,
-              type,
-              prefix,
-              value,
-              additionalLineNumber,
-              additionalPrefix,
-              styles: this.styles,
-              flattenPath: flattenPath || '',
-            })}
+            <div style={{
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              width: '20px',
+              height: '20px',
+              zIndex: 1,
+            }}>
+              {this.props.renderGutter({
+                lineNumber,
+                type,
+                prefix,
+                value,
+                additionalLineNumber,
+                additionalPrefix,
+                styles: this.styles,
+                flattenPath: flattenPath || '',
+              })}
+            </div>
           </td>
         )}
         <td
@@ -350,8 +376,9 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     }
 
     const line = this.lineInformation[index];
-    if (!line) return 32;
+    if (!line) return 28;
     
+    // Calculate a more accurate estimate for long content
     const leftContent = Array.isArray(line.left.value) 
       ? line.left.value.map(v => v.value).join('') 
       : line.left.value || '';
@@ -361,20 +388,39 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     
     const maxLength = Math.max(leftContent.length, rightContent.length);
     
-    const estimatedCharsPerLine = Math.max(40, Math.min(120, this.lastContainerWidth / 10));
-    const estimatedLines = Math.max(1, Math.ceil(maxLength / estimatedCharsPerLine));
-    const baseHeight = 28;
-    const lineHeight = 20;
+    // Base height for short content
+    if (maxLength <= 100) {
+      return 28;
+    }
     
-    return Math.min(200, baseHeight + (estimatedLines - 1) * lineHeight); // Cap max height
+    // Estimate additional height for longer content
+    const estimatedCharsPerLine = this.props.splitView ? 80 : 120;
+    const estimatedLines = Math.ceil(maxLength / estimatedCharsPerLine);
+    const lineHeight = 22;
+    const baseHeight = 28;
+    
+    // Add height for additional lines
+    const totalHeight = baseHeight + (Math.max(0, estimatedLines - 1) * lineHeight);
+    
+    // Cap maximum height to prevent extreme cases, but be generous for content
+    return Math.min(300, totalHeight); // Increased to 300 to prevent content trimming
   };
 
   private setRowHeight = (index: number, size: number) => {
-    if (this.itemHeights[index] !== size) {
+    // Cache the actual measured height
+    if (this.itemHeights[index] !== size && size > 0) {
       this.itemHeights[index] = size;
       if (this.listRef.current) {
         this.listRef.current.resetAfterIndex(index);
       }
+    }
+  };
+
+  private forceResetAllHeights = () => {
+    this.itemHeights = {};
+    this.lastContainerWidth = 0;
+    if (this.listRef.current) {
+      this.listRef.current.resetAfterIndex(0);
     }
   };
 
@@ -401,7 +447,7 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
       let columnExtension = this.props.renderGutter ? 1 : 0;
       
       return (
-        <div style={style}>
+        <div style={{...style, margin: 0, padding: 0}}>
           <table
             className={cn(this.styles.diffContainer, {
               [this.styles.splitView]: splitView,
@@ -410,9 +456,10 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
               width: '100%',
               tableLayout: 'fixed',
               wordBreak: 'break-word',
-              borderCollapse: 'separate',
+              borderCollapse: 'collapse',
               borderSpacing: 0,
               height: '100%',
+              marginBottom: 0,
             }}
           >
             <colgroup>
@@ -437,15 +484,17 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
                     (splitView ? colSpanOnSplitView : colSpanOnInlineView) + columnExtension
                   }
                   className={this.styles.titleBlock}
+                  style={{ textAlign: 'center' }}
                 >
-                  <pre className={this.styles.contentText}>{leftTitle}</pre>
+                  <pre className={this.styles.contentText} style={{ textAlign: 'center', margin: 0 }}>{leftTitle}</pre>
                 </td>
                 {splitView && (
                   <td
                     colSpan={colSpanOnSplitView + columnExtension}
                     className={this.styles.titleBlock}
+                    style={{ textAlign: 'center' }}
                   >
-                    <pre className={this.styles.contentText}>{rightTitle}</pre>
+                    <pre className={this.styles.contentText} style={{ textAlign: 'center', margin: 0 }}>{rightTitle}</pre>
                   </td>
                 )}
               </tr>
@@ -465,9 +514,25 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     React.useEffect(() => {
       if (rowRef.current) {
         const height = rowRef.current.getBoundingClientRect().height;
-        // Only update if height changed significantly to avoid infinite re-renders
-        if (Math.abs((this.itemHeights[lineIndex] || 0) - height) > 3) {
-          this.setRowHeight(lineIndex, height);
+        
+        // When renderGutter (checkbox mode) is active, still allow content expansion
+        // but be more careful about when to cache heights
+        const hasGutter = !!this.props.renderGutter;
+        
+        if (hasGutter) {
+          // In checkbox mode, allow height expansion but be more conservative about caching
+          const threshold = 2; // Small threshold to prevent noise from checkbox interactions
+          if (Math.abs((this.itemHeights[lineIndex] || 0) - height) > threshold && height > 0) {
+            // Allow heights up to reasonable limits, don't restrict content
+            if (height <= 300) { // Generous limit to match getRowHeight
+              this.setRowHeight(lineIndex, height);
+            }
+          }
+        } else {
+          // In normal mode, use flexible height caching
+          if (Math.abs((this.itemHeights[lineIndex] || 0) - height) > 1 && height > 0 && height <= 300) {
+            this.setRowHeight(lineIndex, height);
+          }
         }
       }
     });
@@ -475,9 +540,13 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     React.useEffect(() => {
       const handleInteraction = (e: Event) => {
         const target = e.target as HTMLElement;
-        if (target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') {
+        // Only trigger updates for form elements that actually change content
+        if (target.tagName === 'INPUT' && target.getAttribute('type') !== 'checkbox') {
+          setTimeout(() => setForceUpdate(prev => prev + 1), 0);
+        } else if (target.tagName === 'SELECT' || target.tagName === 'TEXTAREA') {
           setTimeout(() => setForceUpdate(prev => prev + 1), 0);
         }
+        // Skip checkbox interactions as they don't affect content height
       };
 
       if (rowRef.current) {
@@ -496,11 +565,14 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     
     return (
       <div 
-        key={`row-${lineIndex}-${forceUpdate}-${!!this.props.renderGutter}`} 
+        key={`row-${lineIndex}-${forceUpdate}-${!!this.props.renderGutter}-${this.props.noise.length}`} 
         style={{
           ...style,
-          minHeight: Math.max(32, estimatedHeight), 
-          height: 'auto', 
+          height: 'auto', // Let content determine height
+          minHeight: style.height, // Use virtual list height as minimum
+          margin: 0,
+          padding: 0,
+          overflow: 'visible', // Allow content to be fully visible
         }} 
         ref={rowRef}
       >
@@ -512,8 +584,9 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
             width: '100%', 
             tableLayout: 'fixed',
             wordBreak: 'break-word',
-            borderCollapse: 'separate',
-            borderSpacing: 0
+            borderCollapse: 'collapse',
+            borderSpacing: 0,
+            marginBottom: 0
           }}
         >
           <colgroup>
@@ -628,25 +701,20 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     );
   };
 
-  private renderVirtualizedDiff = (): JSX.Element => {
-    const lineCount = this.lineInformation.length;
-    const isSmallDataset = lineCount <= 700;
-
-    if (isSmallDataset) {
-      return this.renderMinimapOptimizedDiff();
-    }
-
-    // For large datasets (>700 lines), use internal virtualized scrolling
-    return this.renderInternalVirtualizedDiff();
-  };
-
-  
-  private renderInternalVirtualizedDiff = (): JSX.Element => {
-    const { virtualizedHeight, leftTitle, rightTitle } = this.props;
+  private renderDiff = (): JSX.Element => {
+    const { leftTitle, rightTitle } = this.props;
     const hasTitle = leftTitle || rightTitle;
+
+    const containerStyle = {
+      width: '100%',
+      height: 'calc(80vh - 90px)',
+      minHeight: '300px',
+      maxHeight: '1300px',
+      overflow: 'auto' as const
+    };
     
     return (
-      <div style={{ height: virtualizedHeight || 600, overflow: 'auto' }}>
+      <div style={containerStyle}>
         <AutoSizer>
           {({ height, width }: { height: number; width: number }) => {
             
@@ -664,15 +732,15 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
                 itemSize={(index: number) => {
                   // Title row gets fixed height of 40px
                   if (hasTitle && index === 0) return 40;
-                  // Adjust index for line information if we have a title
+                  // Calculate height based on content for other rows
                   const lineIndex = hasTitle ? index - 1 : index;
                   return this.getRowHeight(lineIndex);
                 }}
                 ref={this.listRef}
                 overscanCount={5} // Show a few extra items for smooth scrolling
-                estimatedItemSize={40}
+                estimatedItemSize={28}
                 layout="vertical"
-                key={`${width}-${height}`} // Force re-render on size change
+                key={`${width}-${height}-${this.props.noise.length}-${!!this.props.renderGutter}`} // Force re-render on size, noise, or gutter change
               >
                 {this.VirtualizedRowWithTitle}
               </ListComponent>
@@ -683,388 +751,13 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
     );
   };
 
-  // Optimized rendering for minimap mode - renders all content but with performance optimizations
-  private renderMinimapOptimizedDiff = (): JSX.Element => {
-    const { leftTitle, rightTitle, splitView, hideLineNumbers } = this.props;
-    const colSpanOnSplitView = hideLineNumbers ? 2 : 3;
-    const colSpanOnInlineView = hideLineNumbers ? 2 : 4;
-    let columnExtension = this.props.renderGutter ? 1 : 0;
 
-    const title = (leftTitle || rightTitle) && (
-      <tr>
-        <td
-          colSpan={
-            (splitView ? colSpanOnSplitView : colSpanOnInlineView) + columnExtension
-          }
-          className={this.styles.titleBlock}
-        >
-          <pre className={this.styles.contentText}>{leftTitle}</pre>
-        </td>
-        {splitView && (
-          <td
-            colSpan={colSpanOnSplitView + columnExtension}
-            className={this.styles.titleBlock}
-          >
-            <pre className={this.styles.contentText}>{rightTitle}</pre>
-          </td>
-        )}
-      </tr>
-    );
-
-    // Use simpler rendering for better performance with large datasets
-    const optimizedRows = this.lineInformation.map((line, index) => {
-      const { left, right } = line;
-      
-      if (this.props.splitView) {
-        return (
-          <tr key={index} className={this.styles.line}>
-            {this.renderLine(
-              left.lineNumber,
-              left.type,
-              LineNumberPrefix.LEFT,
-              left.value,
-              left.flattenPath,
-            )}
-            {this.renderLine(
-              right.lineNumber,
-              right.type,
-              LineNumberPrefix.RIGHT,
-              right.value,
-              right.flattenPath,
-            )}
-          </tr>
-        );
-      } else {
-        
-        if (left.type === DiffType.REMOVED && right.type === DiffType.ADDED) {
-          return (
-            <React.Fragment key={index}>
-              <tr className={this.styles.line}>
-                {this.renderLine(
-                  left.lineNumber,
-                  left.type,
-                  LineNumberPrefix.LEFT,
-                  left.value,
-                  left.flattenPath,
-                )}
-              </tr>
-              <tr className={this.styles.line}>
-                {this.renderLine(
-                  null,
-                  right.type,
-                  LineNumberPrefix.RIGHT,
-                  right.value,
-                  right.flattenPath,
-                  right.lineNumber,
-                )}
-              </tr>
-            </React.Fragment>
-          );
-        }
-
-        let content;
-        if (left.type === DiffType.REMOVED) {
-          content = this.renderLine(
-            left.lineNumber,
-            left.type,
-            LineNumberPrefix.LEFT,
-            left.value,
-            left.flattenPath,
-            null,
-          );
-        } else if (left.type === DiffType.DEFAULT) {
-          content = this.renderLine(
-            left.lineNumber,
-            left.type,
-            LineNumberPrefix.LEFT,
-            left.value,
-            left.flattenPath,
-            right.lineNumber,
-            LineNumberPrefix.RIGHT,
-          );
-        } else if (right.type === DiffType.ADDED) {
-          content = this.renderLine(
-            null,
-            right.type,
-            LineNumberPrefix.RIGHT,
-            right.value,
-            right.flattenPath,
-            right.lineNumber,
-          );
-        }
-
-        return (
-          <tr key={index} className={this.styles.line}>
-            {content}
-          </tr>
-        );
-      }
-    });
-
-    return (
-      <div style={{ overflow: 'visible', width: '100%' }}>
-        <table 
-          className={cn(this.styles.diffContainer, {
-            [this.styles.splitView]: this.props.splitView,
-          })}
-          style={{ 
-            width: '100%', 
-            tableLayout: 'fixed',
-            wordBreak: 'break-word',
-            borderCollapse: 'separate',
-            borderSpacing: 0
-          }}
-        >
-          <colgroup>
-            {!this.props.hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
-            {!this.props.splitView && !this.props.hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
-            {this.props.renderGutter && <col style={{ width: '30px', minWidth: '30px' }} />}
-            <col style={{ width: '30px', minWidth: '30px' }} />
-            <col style={{ width: 'auto' }} />
-            {this.props.splitView && (
-              <>
-                {!this.props.hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
-                {this.props.renderGutter && <col style={{ width: '30px', minWidth: '30px' }} />}
-                <col style={{ width: '30px', minWidth: '30px' }} />
-                <col style={{ width: 'auto' }} />
-              </>
-            )}
-          </colgroup>
-          <tbody>
-            {title}
-            {optimizedRows}
-          </tbody>
-        </table>
-      </div>
-    );
-  };
-
-  private renderSplitView = ({ left, right }: LineInformation, index: number): JSX.Element => {
-    return (
-      <tr key={index} className={this.styles.line}>
-        {this.renderLine(
-          left.lineNumber,
-          left.type,
-          LineNumberPrefix.LEFT,
-          left.value,
-          left.flattenPath,
-        )}
-        {this.renderLine(
-          right.lineNumber,
-          right.type,
-          LineNumberPrefix.RIGHT,
-          right.value,
-          right.flattenPath,
-        )}
-      </tr>
-    );
-  };
-
-  public renderInlineView = ({ left, right }: LineInformation, index: number): JSX.Element => {
-    if (left.type === DiffType.REMOVED && right.type === DiffType.ADDED) {
-      return (
-        <React.Fragment key={index}>
-          <tr className={this.styles.line}>
-            {this.renderLine(
-              left.lineNumber,
-              left.type,
-              LineNumberPrefix.LEFT,
-              left.value,
-              left.flattenPath,
-            )}
-          </tr>
-          <tr className={this.styles.line}>
-            {this.renderLine(
-              null,
-              right.type,
-              LineNumberPrefix.RIGHT,
-              right.value,
-              right.flattenPath,
-              right.lineNumber,
-            )}
-          </tr>
-        </React.Fragment>
-      );
-    }
-
-    let content;
-    if (left.type === DiffType.REMOVED) {
-      content = this.renderLine(
-        left.lineNumber,
-        left.type,
-        LineNumberPrefix.LEFT,
-        left.value,
-        left.flattenPath,
-        null,
-      );
-    }
-    if (left.type === DiffType.DEFAULT) {
-      content = this.renderLine(
-        left.lineNumber,
-        left.type,
-        LineNumberPrefix.LEFT,
-        left.value,
-        left.flattenPath,
-        right.lineNumber,
-        LineNumberPrefix.RIGHT,
-      );
-    }
-    if (right.type === DiffType.ADDED) {
-      content = this.renderLine(
-        null,
-        right.type,
-        LineNumberPrefix.RIGHT,
-        right.value,
-        right.flattenPath,
-        right.lineNumber,
-      );
-    }
-
-    return (
-      <tr key={index} className={this.styles.line}>
-        {content}
-      </tr>
-    );
-  };
-
-  private onBlockClickProxy =
-    (id: number): any =>
-    (): void =>
-      this.onBlockExpand(id);
-
-  private renderSkippedLineIndicator = (
-    num: number,
-    blockNumber: number,
-    leftBlockLineNumber: number,
-    rightBlockLineNumber: number,
-  ): JSX.Element => {
-    const { hideLineNumbers, splitView } = this.props;
-    const message = this.props.codeFoldMessageRenderer ? (
-      this.props.codeFoldMessageRenderer(num, leftBlockLineNumber, rightBlockLineNumber)
-    ) : (
-      <pre className={this.styles.codeFoldContent}>Expand {num} lines ...</pre>
-    );
-    const content = (
-      <td>
-        <a onClick={this.onBlockClickProxy(blockNumber)} tabIndex={0}>
-          {message}
-        </a>
-      </td>
-    );
-    const isUnifiedViewWithoutLineNumbers = !splitView && !hideLineNumbers;
-    return (
-      <tr
-        key={`${leftBlockLineNumber}-${rightBlockLineNumber}`}
-        className={this.styles.codeFold}
-      >
-        {!hideLineNumbers && <td className={this.styles.codeFoldGutter} />}
-        {this.props.renderGutter && <td className={this.styles.codeFoldGutter} style={{ background: 'transparent', border: 'none' }} />}
-        <td
-          className={cn({
-            [this.styles.codeFoldGutter]: isUnifiedViewWithoutLineNumbers,
-          })}
-        />
-
-        {isUnifiedViewWithoutLineNumbers ? (
-          <React.Fragment>
-            <td />
-            {content}
-          </React.Fragment>
-        ) : (
-          <React.Fragment>
-            {content}
-            {this.props.renderGutter && <td />}
-            <td />
-          </React.Fragment>
-        )}
-
-        <td />
-        <td />
-      </tr>
-    );
-  };
-
-  private renderDiff = (): JSX.Element[] => {
-    const {
-      oldValue,
-      newValue,
-      noise,
-      splitView,
-      disableWordDiff,
-      compareMethod,
-      linesOffset,
-    } = this.props;
-    const { lineInformation, diffLines } = computeLineInformation(
-      oldValue,
-      newValue,
-      noise,
-      disableWordDiff,
-      compareMethod,
-      linesOffset,
-    );
-
-    const extraLines =
-      this.props.extraLinesSurroundingDiff < 0 ? 0 : this.props.extraLinesSurroundingDiff;
-    let skippedLines: number[] = [];
-    return lineInformation.map((line: LineInformation, i: number): JSX.Element => {
-      const diffBlockStart = diffLines[0];
-      const currentPosition = diffBlockStart - i;
-      if (this.props.showDiffOnly) {
-        if (currentPosition === -extraLines) {
-          skippedLines = [];
-          diffLines.shift();
-        }
-        if (
-          line.left.type === DiffType.DEFAULT &&
-          (currentPosition > extraLines || typeof diffBlockStart === 'undefined') &&
-          !this.state.expandedBlocks.includes(diffBlockStart)
-        ) {
-          skippedLines.push(i + 1);
-          if (i === lineInformation.length - 1 && skippedLines.length > 1) {
-            return this.renderSkippedLineIndicator(
-              skippedLines.length,
-              diffBlockStart,
-              line.left.lineNumber,
-              line.right.lineNumber,
-            );
-          }
-          return null;
-        }
-      }
-
-      const diffNodes = splitView
-        ? this.renderSplitView(line, i)
-        : this.renderInlineView(line, i);
-
-      if (currentPosition === extraLines && skippedLines.length > 0) {
-        const { length } = skippedLines;
-        skippedLines = [];
-        return (
-          <React.Fragment key={i}>
-            {this.renderSkippedLineIndicator(
-              length,
-              diffBlockStart,
-              line.left.lineNumber,
-              line.right.lineNumber,
-            )}
-            {diffNodes}
-          </React.Fragment>
-        );
-      }
-      return diffNodes;
-    });
-  };
 
   public render = (): JSX.Element => {
     const {
       oldValue,
       newValue,
       useDarkTheme,
-      leftTitle,
-      rightTitle,
-      splitView,
-      hideLineNumbers,
-      enableVirtualization,
       disableWordDiff,
       compareMethod,
       linesOffset,
@@ -1077,85 +770,21 @@ class DiffViewer extends React.Component<ReactDiffViewerProps, ReactDiffViewerSt
 
     this.styles = this.computeStyles(this.props.styles, useDarkTheme);
     
-    if (enableVirtualization) {
-      const { lineInformation } = computeLineInformation(
-        oldValue,
-        newValue,
-        noise,
-        disableWordDiff,
-        compareMethod,
-        linesOffset,
-      );
-      this.lineInformation = lineInformation;
-    }
-
-    const colSpanOnSplitView = hideLineNumbers ? 2 : 3;
-    const colSpanOnInlineView = hideLineNumbers ? 2 : 4;
-    let columnExtension = this.props.renderGutter ? 1 : 0;
-
-    const title = (leftTitle || rightTitle) && (
-      <tr>
-        <td
-          colSpan={
-            (splitView ? colSpanOnSplitView : colSpanOnInlineView) + columnExtension
-          }
-          className={this.styles.titleBlock}
-        >
-          <pre className={this.styles.contentText}>{leftTitle}</pre>
-        </td>
-        {splitView && (
-          <td
-            colSpan={colSpanOnSplitView + columnExtension}
-            className={this.styles.titleBlock}
-          >
-            <pre className={this.styles.contentText}>{rightTitle}</pre>
-          </td>
-        )}
-      </tr>
+    const { lineInformation } = computeLineInformation(
+      oldValue,
+      newValue,
+      noise,
+      disableWordDiff,
+      compareMethod,
+      linesOffset,
     );
+    this.lineInformation = lineInformation;
 
-    if (enableVirtualization) {
-      return (
-        <div>
-          {this.renderVirtualizedDiff()}
-        </div>
-      );
-    }
-
-    const nodes = this.renderDiff();
-    
+    //virtualized rendering
     return (
-      <table
-        className={cn(this.styles.diffContainer, {
-          [this.styles.splitView]: splitView,
-        })}
-        style={{
-          tableLayout: 'fixed',
-          borderCollapse: 'separate',
-          borderSpacing: 0,
-          width: '100%'
-        }}
-      >
-        <colgroup>
-          {!hideLineNumbers && <col style={{ width: '60px', minWidth: '60px' }} />}
-          {!splitView && !hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
-          {this.props.renderGutter && <col style={{ width: '30px', minWidth: '30px' }} />}
-          <col style={{ width: '30px', minWidth: '30px' }} />
-          <col style={{ width: 'auto' }} />
-          {splitView && (
-            <>
-              {!hideLineNumbers && <col style={{ width: '50px', minWidth: '50px' }} />}
-              {this.props.renderGutter && <col style={{ width: '30px', minWidth: '30px' }} />}
-              <col style={{ width: '30px', minWidth: '30px' }} />
-              <col style={{ width: 'auto' }} />
-            </>
-          )}
-        </colgroup>
-        <tbody>
-          {title}
-          {nodes}
-        </tbody>
-      </table>
+      <div>
+        {this.renderDiff()}
+      </div>
     );
   };
 }
